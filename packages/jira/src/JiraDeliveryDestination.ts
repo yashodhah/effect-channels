@@ -19,10 +19,5 @@ export type JiraDeliveryDestination = typeof JiraDeliveryDestination.Type
 /** JSON codec for storing the destination. */
 export const JiraDeliveryDestinationJson = Schema.toCodecJson(JiraDeliveryDestination)
 
-/** The output operations a Jira issue supports: comments only, no reactions or activity. */
-export const jiraSupportedOperations: ReadonlyArray<DeliveryOperationKind> = [
-	'PresentOutcome',
-	'CreateMessage',
-	'UpdateMessage',
-	'DeleteMessage',
-]
+/** The output operations a Jira issue supports: new comments only: no edits, deletes, reactions, or activity. */
+export const jiraSupportedOperations: ReadonlyArray<DeliveryOperationKind> = ['PresentOutcome', 'CreateMessage']
