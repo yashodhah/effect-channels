@@ -97,6 +97,22 @@
         "effect": "catalog:",
       },
     },
+    "packages/jira": {
+      "name": "@humanlayer/channels-jira",
+      "version": "0.0.0",
+      "dependencies": {
+        "@humanlayer/channels-delivery": "workspace:*",
+      },
+      "devDependencies": {
+        "@effect/platform-node": "catalog:",
+        "@effect/vitest": "catalog:",
+        "effect": "catalog:",
+        "typescript": "catalog:",
+      },
+      "peerDependencies": {
+        "effect": "catalog:",
+      },
+    },
     "packages/linear": {
       "name": "@humanlayer/channels-linear",
       "version": "0.0.0",
@@ -378,6 +394,8 @@
     "@humanlayer/channels-delivery": ["@humanlayer/channels-delivery@workspace:packages/delivery"],
 
     "@humanlayer/channels-github": ["@humanlayer/channels-github@workspace:packages/github"],
+
+    "@humanlayer/channels-jira": ["@humanlayer/channels-jira@workspace:packages/jira"],
 
     "@humanlayer/channels-linear": ["@humanlayer/channels-linear@workspace:packages/linear"],
 
