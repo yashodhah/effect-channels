@@ -8,7 +8,7 @@ import {
 	DeliveryOperationId,
 	DeliveryOutcome,
 	MessageId,
-	PreparedDeliveryCallback,
+	PreparedDeliveryInvocation,
 	ProviderOutputAttempt,
 	ProviderPresentOutcome,
 	SetActivity,
@@ -32,8 +32,8 @@ const destination = JiraDeliveryDestination.cases.JiraIssue.make({
 	issue: { id: Schema.decodeSync(JiraIssueId)('10042'), key: 'ABC-7', mailboxKey: 'jira:v1:mailbox' },
 })
 
-const prepared = PreparedDeliveryCallback.make({
-	name: 'onMentioned',
+const prepared = PreparedDeliveryInvocation.make({
+	callback: 'onMentioned',
 	presentationVersion: jiraPresentationVersion,
 	destination: Schema.encodeSync(JiraDeliveryDestinationJson)(destination),
 	supportedOperations: jiraSupportedOperations,
@@ -60,8 +60,8 @@ const run = (operation: ProviderOutputOperation, fail?: JiraApiError) =>
 					Effect.andThen(fail === undefined ? Effect.succeed({ commentId: '900' }) : Effect.fail(fail)),
 				),
 		})
-		const processor = yield* makeJiraOutputProcessor({ namespace: 'jira-output-test' })
-		const result = yield* processor.process(attempt(operation)).pipe(Effect.provide(api), Effect.result)
+		const processor = yield* makeJiraOutputProcessor({ namespace: 'jira-output-test' }).pipe(Effect.provide(api))
+		const result = yield* processor.process(attempt(operation)).pipe(Effect.result)
 		return { result, calls: yield* Ref.get(calls) }
 	})
 
@@ -135,12 +135,14 @@ describe('Jira delivery output', () => {
 
 	it.effect('rejects a destination version it does not know', ({ expect }) =>
 		Effect.gen(function* () {
-			const processor = yield* makeJiraOutputProcessor({ namespace: 'jira-output-test' })
+			const processor = yield* makeJiraOutputProcessor({ namespace: 'jira-output-test' }).pipe(
+				Effect.provide(Layer.mock(JiraApi, {})),
+			)
 			const old = ProviderOutputAttempt.make({
 				...attempt(CreateMessage.make({ messageId: MessageId.make('m'), markdown: 'x' })),
 				prepared: { ...prepared, presentationVersion: jiraPresentationVersion + 1 },
 			})
-			const result = yield* processor.process(old).pipe(Effect.provide(Layer.mock(JiraApi, {})), Effect.result)
+			const result = yield* processor.process(old).pipe(Effect.result)
 			expect(Result.getOrThrow(Result.flip(result))).toMatchObject({ retryable: false })
 		}),
 	)

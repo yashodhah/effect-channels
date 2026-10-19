@@ -1,10 +1,12 @@
 import { describe, it } from '@effect/vitest'
 import { QueueDeliveryMode } from '@humanlayer/channels-delivery'
-import { Config, ConfigProvider, Effect, Redacted, Schema } from 'effect'
+import { Config, ConfigProvider, Effect, Layer, Redacted, Schema } from 'effect'
 
-import { JiraAccountId, JiraBot } from '../src'
+import { JiraAccountId, JiraApi, JiraBot } from '../src'
 
 const noConfiguration = ConfigProvider.layer(ConfigProvider.fromUnknown({}))
+/** `JiraApi` is a build requirement of the whole provider; only the output half uses it. */
+const unusedJiraApi = Layer.mock(JiraApi, {})
 
 describe('JiraBot.make', () => {
 	it.effect('names the provider jira and has an output processor', ({ expect }) =>
@@ -19,7 +21,7 @@ describe('JiraBot.make', () => {
 			expect(provider.providerName).toBe('jira')
 			const output = yield* (
 				provider.outputProcessor?.({ namespace: 'jira-bot-test' }) ?? Effect.die('no output processor')
-			).pipe(Effect.scoped)
+			).pipe(Effect.scoped, Effect.provide(unusedJiraApi))
 			expect(output.providerName).toBe('jira')
 		}),
 	)
@@ -42,7 +44,7 @@ describe('JiraBot.make', () => {
 			)
 			const webhook = yield* provider
 				.webhookProvider({ namespace: 'jira-bot-test' })
-				.pipe(Effect.scoped, Effect.provide(provided))
+				.pipe(Effect.scoped, Effect.provide(Layer.merge(provided, unusedJiraApi)))
 			expect(webhook.providerName).toBe('jira')
 		}),
 	)
@@ -58,7 +60,7 @@ describe('JiraBot.make', () => {
 			})
 			const error = yield* provider
 				.webhookProvider({ namespace: 'jira-bot-test' })
-				.pipe(Effect.scoped, Effect.provide(noConfiguration), Effect.flip)
+				.pipe(Effect.scoped, Effect.provide(Layer.merge(noConfiguration, unusedJiraApi)), Effect.flip)
 			expect(error).toBeInstanceOf(Config.ConfigError)
 		}),
 	)
@@ -74,7 +76,7 @@ describe('JiraBot.make', () => {
 			})
 			const events = yield* provider
 				.eventProcessor({ namespace: 'jira-bot-test' })
-				.pipe(Effect.scoped, Effect.provide(noConfiguration))
+				.pipe(Effect.scoped, Effect.provide(Layer.merge(noConfiguration, unusedJiraApi)))
 			expect(events.providerName).toBe('jira')
 		}),
 	)

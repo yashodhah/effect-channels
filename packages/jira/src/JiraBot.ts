@@ -17,7 +17,8 @@ import { makeJiraWebhookProvider } from './JiraWebhookProvider'
  * @property bot - the account id of this bot, whose mentions start a delivery
  * @property site - the Jira site host, used as the installation id
  * @property handlers - the callbacks; the application provides `JiraApi` (usually `JiraApiLive`) and anything
- * else they need, and the storage supplies `MailboxSubscriptions`
+ * else they need, and the storage supplies `MailboxSubscriptions`. The output half reads the same `JiraApi`
+ * when it is built, so `JiraApi` is a build requirement too.
  */
 export type MakeOptions<E, R> = {
 	readonly webhookSecret: Config.Config<Redacted.Redacted<string>>
@@ -30,7 +31,7 @@ export type MakeOptions<E, R> = {
 export const make = <E, R>(
 	options: MakeOptions<E, R>,
 ): ChannelsProvider<{
-	readonly build: never
+	readonly build: JiraApi
 	readonly process: R | JiraApi
 	readonly error: Config.ConfigError
 }> => {

@@ -2,7 +2,6 @@ import { describe, it } from '@effect/vitest'
 import {
 	DeliveryAdmission,
 	deliveryMailboxKey,
-	PreparedDeliveryCallback,
 	PreparedDeliveryInvocation,
 	ProviderEventExecutionFailed,
 	ProviderEventHandled,
@@ -87,15 +86,11 @@ describe('Jira event batch processing', () => {
 			expect(event?.eventId).toBe('webhook-1')
 			expect(preparations).toEqual([
 				PreparedDeliveryInvocation.make({
-					callbacks: [
-						PreparedDeliveryCallback.make({
-							name: 'onMentioned',
-							presentationVersion: 1,
-							destination: { _tag: 'JiraIssue', issue: { id: '10042', key: 'ABC-7', mailboxKey } },
-							supportedOperations: jiraSupportedOperations,
-							reactionTargets: [],
-						}),
-					],
+					callback: 'onMentioned',
+					presentationVersion: 1,
+					destination: { _tag: 'JiraIssue', issue: { id: '10042', key: 'ABC-7', mailboxKey } },
+					supportedOperations: jiraSupportedOperations,
+					reactionTargets: [],
 				}),
 			])
 		}),
@@ -190,7 +185,7 @@ describe('Jira event batch processing', () => {
 				ProviderEventExecutionFailed.make({ provider: 'jira', retryable: true, safeCode: 'callback_failed' }),
 			)
 			const second = yield* first.retry
-			expect(Option.map(second.execution.prepared, ({ callbacks }) => callbacks[0].name)).toEqual(
+			expect(Option.map(second.execution.prepared, ({ callback }) => callback)).toEqual(
 				Option.some('onMentioned'),
 			)
 			expect(yield* processor.process([mention], second.execution)).toEqual(ProviderEventHandled.make({}))

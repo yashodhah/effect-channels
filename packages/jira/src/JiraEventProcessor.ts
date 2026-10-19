@@ -4,7 +4,6 @@ import {
 	type DeliveryAdmission,
 	type DeliveryAdmissionBatch,
 	type DeliveryContext,
-	PreparedDeliveryCallback,
 	PreparedDeliveryInvocation,
 	type ProviderDeliveryExecution,
 	ProviderEventExecutionFailed,
@@ -151,17 +150,17 @@ const prepareInvocation = Effect.fn('jira.prepare_delivery')(function* (
 		Effect.tapError((error) => Effect.logError('Jira delivery destination could not be encoded', error)),
 		Effect.mapError(() => nonRetryableFailure('delivery_destination_unencodable')),
 	)
-	const step = PreparedDeliveryCallback.make({
-		name: 'onMentioned',
+	const prepared = PreparedDeliveryInvocation.make({
+		callback: 'onMentioned',
 		presentationVersion: jiraPresentationVersion,
 		destination,
 		supportedOperations: jiraSupportedOperations,
 		reactionTargets: [],
 	})
-	return yield* execution.prepare(PreparedDeliveryInvocation.make({ callbacks: [step] })).pipe(
+	return yield* execution.prepare(prepared).pipe(
 		Effect.tapError((error) =>
 			Effect.logError('Jira delivery preparation failed', error).pipe(
-				Effect.annotateLogs({ deliveryId: execution.deliveryId, callbacks: [step.name] }),
+				Effect.annotateLogs({ deliveryId: execution.deliveryId, callback: prepared.callback }),
 			),
 		),
 		Effect.catchTags({
@@ -175,14 +174,11 @@ const prepareInvocation = Effect.fn('jira.prepare_delivery')(function* (
 const runPreparedInvocation = Effect.fn('jira.run_prepared_invocation')(function* <R>(input: {
 	readonly callbacks: JiraCallbackOperations<R>
 	readonly prepared: PreparedDeliveryInvocation
-	readonly callbackIndex: number
 	readonly batch: JiraBatchEvents
 	readonly delivery: DeliveryContext
 }) {
-	const step = input.prepared.callbacks[input.callbackIndex]
-	if (Predicate.isUndefined(step)) return yield* nonRetryableFailure('prepared_callback_missing')
-	const annotations = { deliveryId: input.delivery.deliveryId, callback: step.name }
-	yield* Schema.decodeUnknownEffect(JiraCallbackName)(step.name).pipe(
+	const annotations = { deliveryId: input.delivery.deliveryId, callback: input.prepared.callback }
+	yield* Schema.decodeUnknownEffect(JiraCallbackName)(input.prepared.callback).pipe(
 		Effect.tapError((error) =>
 			Effect.logError('Prepared Jira callback is unknown', error).pipe(Effect.annotateLogs(annotations)),
 		),
@@ -223,7 +219,6 @@ const processJiraBatch = <R>(options: JiraEventProcessorOptions, callbacks: Jira
 			runPreparedInvocation({
 				callbacks,
 				prepared,
-				callbackIndex: execution.callbackIndex,
 				batch,
 				delivery: execution.context,
 			})

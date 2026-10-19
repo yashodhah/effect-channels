@@ -65,10 +65,15 @@ const postComment = Effect.fn('jira.output.post_comment')(function* (issueKey: s
 	return DeliveryOutputApplied.make({ receipt })
 })
 
-/** Build Jira's output half. It sends through the `JiraApi` the host supplies while it runs. */
+/**
+ * Build Jira's output half. It reads the `JiraApi` the host supplies when the half is built and sends
+ * through it, so the processor itself needs nothing while it runs.
+ */
 export const makeJiraOutputProcessor = Effect.fn('jira.make_output_processor')(function* (input: {
 	readonly namespace: string
 }) {
+	const jiraApi = yield* JiraApi
+
 	const process = Effect.fn('jira.process_delivery_output')(
 		function* (attempt: ProviderOutputAttempt) {
 			if (attempt.prepared.presentationVersion !== jiraPresentationVersion) {
@@ -97,8 +102,11 @@ export const makeJiraOutputProcessor = Effect.fn('jira.make_output_processor')(f
 			)
 		},
 		(effect, attempt) =>
-			effect.pipe(Effect.annotateLogs({ delivery_id: attempt.deliveryId, operation_id: attempt.operationId })),
+			effect.pipe(
+				Effect.annotateLogs({ delivery_id: attempt.deliveryId, operation_id: attempt.operationId }),
+				Effect.provideService(JiraApi, jiraApi),
+			),
 	)
 
-	return { namespace: input.namespace, providerName: 'jira', process } satisfies ProviderOutputProcessor<JiraApi>
+	return { namespace: input.namespace, providerName: 'jira', process } satisfies ProviderOutputProcessor
 })
