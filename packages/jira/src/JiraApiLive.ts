@@ -1,4 +1,4 @@
-/** `JiraApi` over Jira Cloud's REST v3, with basic auth (bot email and API token). */
+/** `JiraApi` over Jira Cloud's REST v3 through the Atlassian API gateway, with a Bearer token (service account API token). */
 import { Config, Effect, Layer, Predicate, Redacted, Schema } from 'effect'
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from 'effect/http'
 
@@ -42,84 +42,97 @@ const statusError = (operation: JiraApiOperation, response: HttpClientResponse.H
 
 const finalError = (operation: JiraApiOperation) => JiraApiError.make({ operation, retryable: false })
 
-/** Base64 of the UTF-8 bytes; `btoa` on the raw string throws on characters outside Latin-1. */
-const utf8Base64 = (value: string) => {
-	let binary = ''
-	for (const byte of new TextEncoder().encode(value)) binary += String.fromCharCode(byte)
-	return btoa(binary)
-}
-
-/** The base URL must be `https:` with a host: every request carries the bot's credentials. */
-const JiraBaseUrl = Schema.String.check(
-	Schema.isPattern(/^https:\/\/[^\s/?#]+/i, { message: 'JIRA_BASE_URL must be an https:// URL' }),
-)
-
-/** Reads `JIRA_BASE_URL` (https only), `JIRA_BOT_EMAIL`, and `JIRA_API_TOKEN` (redacted) when the layer is built. */
-export const JiraApiLive: Layer.Layer<JiraApi, Config.ConfigError, HttpClient.HttpClient> = Layer.effect(
-	JiraApi,
-	Effect.gen(function* () {
-		const baseUrl = (yield* Config.schema(JiraBaseUrl, 'JIRA_BASE_URL')).replace(/\/+$/, '')
-		const email = yield* Config.String('JIRA_BOT_EMAIL')
-		const token = yield* Config.Redacted('JIRA_API_TOKEN')
-		const httpClient = yield* HttpClient.HttpClient
-		const authorization = () => `Basic ${utf8Base64(`${email}:${Redacted.value(token)}`)}`
-
-		/** Send a request and decode a 2xx JSON body; transport failures are retryable, decode failures are not. */
-		const send = <A, I>(
-			operation: JiraApiOperation,
-			schema: Schema.Codec<A, I>,
-			request: HttpClientRequest.HttpClientRequest,
-		) =>
-			httpClient
-				.execute(
-					request.pipe(
-						HttpClientRequest.setHeader('authorization', authorization()),
-						HttpClientRequest.setHeader('accept', 'application/json'),
-					),
-				)
-				.pipe(
-					Effect.mapError(() => JiraApiError.make({ operation, retryable: true })),
-					Effect.flatMap((response) =>
-						response.status >= 200 && response.status < 300
-							? response.json.pipe(
-									Effect.flatMap(Schema.decodeUnknownEffect(schema)),
-									Effect.mapError(() => finalError(operation)),
-								)
-							: Effect.fail(statusError(operation, response)),
-					),
-				)
-
-		return JiraApi.of({
-			postComment: ({ issueKey, markdown }) =>
-				HttpClientRequest.post(`${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`).pipe(
-					HttpClientRequest.bodyJson({ body: markdownToAdf(markdown) }),
-					Effect.mapError(() => finalError('post_comment')),
-					Effect.flatMap((request) => send('post_comment', CommentCreated, request)),
-					Effect.map(({ id }) => ({ commentId: id })),
-					Effect.withSpan('jira.api.post_comment'),
-				),
-			fetchIssue: (issueKey) =>
-				send(
-					'fetch_issue',
-					IssueResponse,
-					HttpClientRequest.get(
-						`${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=summary,description`,
-					),
-				).pipe(
-					Effect.map(({ key, fields }) => ({
-						key,
-						title: fields.summary,
-						description: Predicate.isNullish(fields.description)
-							? null
-							: commentPlainText(fields.description),
-					})),
-					Effect.withSpan('jira.api.fetch_issue'),
-				),
-			myself: () =>
-				send('myself', MyselfResponse, HttpClientRequest.get(`${baseUrl}/rest/api/3/myself`)).pipe(
-					Effect.map(({ accountId }) => ({ accountId })),
-					Effect.withSpan('jira.api.myself'),
-				),
-		})
+/**
+ * The cloud id is interpolated into every request path, so only a UUID is accepted: anything else could
+ * redirect the bot's token to another path on the gateway.
+ */
+const JiraCloudId = Schema.String.check(
+	Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, {
+		message: 'JIRA_CLOUD_ID must be a UUID',
 	}),
 )
+
+export type MakeJiraApiLiveOptions = {
+	/** The gateway origin; defaults to `https://api.atlassian.com`. Tests point it at a fake. */
+	readonly gatewayBaseUrl?: string
+}
+
+/**
+ * Reads `JIRA_CLOUD_ID` (a UUID) and `JIRA_API_TOKEN` (redacted) when the layer is built, and sends
+ * `Authorization: Bearer <token>` to `<gateway>/ex/jira/<cloudId>/rest/api/3/...`.
+ */
+export const makeJiraApiLive = (
+	options: MakeJiraApiLiveOptions = {},
+): Layer.Layer<JiraApi, Config.ConfigError, HttpClient.HttpClient> =>
+	Layer.effect(
+		JiraApi,
+		Effect.gen(function* () {
+			const gatewayBaseUrl = (options.gatewayBaseUrl ?? 'https://api.atlassian.com').replace(/\/+$/, '')
+			const cloudId = yield* Config.schema(JiraCloudId, 'JIRA_CLOUD_ID')
+			const token = yield* Config.Redacted('JIRA_API_TOKEN')
+			const baseUrl = `${gatewayBaseUrl}/ex/jira/${cloudId}`
+			const httpClient = yield* HttpClient.HttpClient
+			const authorization = () => `Bearer ${Redacted.value(token)}`
+
+			/** Send a request and decode a 2xx JSON body; transport failures are retryable, decode failures are not. */
+			const send = <A, I>(
+				operation: JiraApiOperation,
+				schema: Schema.Codec<A, I>,
+				request: HttpClientRequest.HttpClientRequest,
+			) =>
+				httpClient
+					.execute(
+						request.pipe(
+							HttpClientRequest.setHeader('authorization', authorization()),
+							HttpClientRequest.setHeader('accept', 'application/json'),
+						),
+					)
+					.pipe(
+						Effect.mapError(() => JiraApiError.make({ operation, retryable: true })),
+						Effect.flatMap((response) =>
+							response.status >= 200 && response.status < 300
+								? response.json.pipe(
+										Effect.flatMap(Schema.decodeUnknownEffect(schema)),
+										Effect.mapError(() => finalError(operation)),
+									)
+								: Effect.fail(statusError(operation, response)),
+						),
+					)
+
+			return JiraApi.of({
+				postComment: ({ issueKey, markdown }) =>
+					HttpClientRequest.post(`${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`).pipe(
+						HttpClientRequest.bodyJson({ body: markdownToAdf(markdown) }),
+						Effect.mapError(() => finalError('post_comment')),
+						Effect.flatMap((request) => send('post_comment', CommentCreated, request)),
+						Effect.map(({ id }) => ({ commentId: id })),
+						Effect.withSpan('jira.api.post_comment'),
+					),
+				fetchIssue: (issueKey) =>
+					send(
+						'fetch_issue',
+						IssueResponse,
+						HttpClientRequest.get(
+							`${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=summary,description`,
+						),
+					).pipe(
+						Effect.map(({ key, fields }) => ({
+							key,
+							title: fields.summary,
+							description: Predicate.isNullish(fields.description)
+								? null
+								: commentPlainText(fields.description),
+						})),
+						Effect.withSpan('jira.api.fetch_issue'),
+					),
+				myself: () =>
+					send('myself', MyselfResponse, HttpClientRequest.get(`${baseUrl}/rest/api/3/myself`)).pipe(
+						Effect.map(({ accountId }) => ({ accountId })),
+						Effect.withSpan('jira.api.myself'),
+					),
+			})
+		}),
+	)
+
+/** `makeJiraApiLive` against the public gateway. */
+export const JiraApiLive: Layer.Layer<JiraApi, Config.ConfigError, HttpClient.HttpClient> = makeJiraApiLive()

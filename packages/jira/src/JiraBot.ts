@@ -29,7 +29,8 @@ const JiraApiFetchLive = JiraApiLive.pipe(Layer.provide(FetchHttpClient.layer))
  * @property handlers - the callbacks; the bot supplies `JiraApi` to them, the storage supplies
  * `MailboxSubscriptions`, and anything else they need comes from the application
  * @property jiraApi - how the bot talks to Jira; defaults to `JiraApiLive` over Fetch, which reads
- * `JIRA_BASE_URL`, `JIRA_BOT_EMAIL` and `JIRA_API_TOKEN` from the configuration
+ * `JIRA_CLOUD_ID` and `JIRA_API_TOKEN` from the configuration and calls the Atlassian API gateway with a
+ * Bearer token. Both halves build it, so the webhook half needs these two variables as well
  */
 export type MakeOptions<E, R, ApiError, ApiRequirements> = {
 	readonly webhookSecret: Config.Config<Redacted.Redacted<string>>

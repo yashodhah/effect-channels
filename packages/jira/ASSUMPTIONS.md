@@ -1,6 +1,6 @@
 # Jira channel assumptions
 
-No live Jira site was used. Every item is unverified against a real site. `documented` = stated in Atlassian docs (URL given); `assumed` = inferred, confirm before relying on it.
+Only authentication and `myself` were checked against a real site (section (f)). Every other item is unverified against a real site. `documented` = stated in Atlassian docs (URL given); `assumed` = inferred, confirm before relying on it.
 
 ## (a) Signature
 - Header `X-Hub-Signature`, value `method=signature`, e.g. `sha256=<hex>`; HMAC with the hash named by `method`, keyed by the webhook secret. Status: documented. https://developer.atlassian.com/cloud/jira/platform/webhooks/
@@ -24,8 +24,10 @@ No live Jira site was used. Every item is unverified against a real site. `docum
 - Code: the event id is always `comment_created:<comment.id>`, read from the signed body. The identifier header is ignored: it is not covered by the HMAC, so a replayed body with a fresh header would otherwise be admitted as a new event and start a second run. Retries of the same comment dedupe on `comment.id`. Only `comment_created` is admitted; the prefix keeps a later event type for the same comment from colliding.
 
 ## (f) REST calls
-- `GET /rest/api/3/myself` returns `accountId`, `displayName`. Status: documented (Jira Cloud REST v3), not re-fetched here.
-- `POST /rest/api/3/issue/{key}/comment` with body `{ "body": <ADF doc> }`, one `paragraph` node per block; returns the created comment with `id`. Status: documented (REST v3), not re-fetched here. Basic auth (email + API token, encoded as UTF-8 before base64) assumed for the bot. `JIRA_BASE_URL` must be `https://`; anything else fails the layer build with a `ConfigError`.
+- Auth: the bot is an Atlassian service account with an API token. Every call goes through the API gateway, `https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/...`, with `Authorization: Bearer <token>`. Basic auth (email + token against the site URL) is not used. `JIRA_CLOUD_ID` must be a UUID (it is part of the request path); anything else fails the layer build with a `ConfigError`. The cloud id comes from `https://<site>.atlassian.net/_edge/tenant_info`.
+- VERIFIED 2026-10-19 by a real curl against a real site: `GET https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/myself` with `Authorization: Bearer <service-account token>` returned 200 with `accountId` in the form `<digits>:<uuid>` (e.g. `712020:9a62b034-dabf-4364-b257-f4ad41e00a74`), `accountType: "app"`, `displayName`. Only this 200 on `myself` was verified.
+- `POST /rest/api/3/issue/{key}/comment` with body `{ "body": <ADF doc> }`, one `paragraph` node per block; returns the created comment with `id`. Status: documented (REST v3), not verified. Assumed to work through the same gateway prefix with the same Bearer token.
+- `GET /rest/api/3/issue/{key}?fields=summary,description`. Status: documented (REST v3), not verified. Same gateway and Bearer assumption.
 
 ## Fixtures
 `test/fixtures/*.json` are hand-written. Bot: accountId `5b10ac8d82e05b22cc7d4ef5`, name `slopcodebot`. Human author: `557058a1b2c3d4e5f6a7b8c9` (fictional). Issue id `10042`, key `ABC-7`, summary `Add rate limiting`. Site `example.atlassian.net` is a placeholder.
