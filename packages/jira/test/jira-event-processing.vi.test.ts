@@ -3,6 +3,7 @@ import {
 	DeliveryAdmission,
 	deliveryMailboxKey,
 	PreparedDeliveryInvocation,
+	ProviderDeliveryExecution,
 	ProviderEventExecutionFailed,
 	ProviderEventHandled,
 	ProviderEventIgnored,
@@ -205,6 +206,44 @@ describe('Jira event batch processing', () => {
 			)
 		}),
 	)
+
+	it.effect('fails a saved callback that is unknown, unconfigured, or cannot be rebuilt', ({ expect }) => {
+		const onMentioned = vi.fn<Handler>(() => Effect.void)
+		return Effect.gen(function* () {
+			const test = yield* makeTestDeliveryExecution()
+			const withPrepared = (callback: string) =>
+				new ProviderDeliveryExecution({
+					...test.execution,
+					prepared: Option.some(
+						PreparedDeliveryInvocation.make({
+							callback,
+							presentationVersion: 1,
+							destination: null,
+							supportedOperations: [],
+						}),
+					),
+				})
+			const failed = (safeCode: string) =>
+				ProviderEventExecutionFailed.make({ provider: 'jira', retryable: false, safeCode })
+			const configured = makeJiraEventProcessor({ namespace, bot, handlers: { onMentioned } })
+			const unconfigured = makeJiraEventProcessor<never, never>({ namespace, bot, handlers: {} })
+			const mention = fixtureAdmission('comment-created-mention.json')
+
+			expect(yield* configured.process([mention], withPrepared('onRemoved')).pipe(Effect.flip)).toEqual(
+				failed('prepared_callback_missing'),
+			)
+			expect(yield* unconfigured.process([mention], withPrepared('onMentioned')).pipe(Effect.flip)).toEqual(
+				failed('prepared_callback_missing'),
+			)
+			expect(
+				yield* configured
+					.process([fixtureAdmission('comment-created-plain.json')], withPrepared('onMentioned'))
+					.pipe(Effect.flip),
+			).toEqual(failed('prepared_callback_unbuildable'))
+			expect(onMentioned).not.toHaveBeenCalled()
+			expect(yield* Ref.get(test.preparations)).toEqual([])
+		})
+	})
 
 	it.effect('rejects a batch for another namespace or issue', ({ expect }) =>
 		Effect.gen(function* () {
