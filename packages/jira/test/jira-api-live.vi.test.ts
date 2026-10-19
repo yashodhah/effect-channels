@@ -12,15 +12,19 @@ const config = {
 	JIRA_API_TOKEN: testCredential,
 }
 
-const makeLayer = (httpClient: HttpClient.HttpClient) =>
+const makeLayer = (httpClient: HttpClient.HttpClient, overrides: Readonly<Record<string, string>> = {}) =>
 	JiraApiLive.pipe(
 		Layer.provide(
 			Layer.mergeAll(
 				Layer.succeed(HttpClient.HttpClient, httpClient),
-				ConfigProvider.layer(ConfigProvider.fromUnknown(config)),
+				ConfigProvider.layer(ConfigProvider.fromUnknown({ ...config, ...overrides })),
 			),
 		),
 	)
+
+const okClient = HttpClient.make((request) =>
+	Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ accountId: '5b10' }))),
+)
 
 const basicAuth = `Basic ${btoa(`bot@example.com:${testCredential}`)}`
 
@@ -169,6 +173,44 @@ describe('JiraApiLive', () => {
 				Effect.flip,
 			)
 			expect(error).toBeInstanceOf(Config.ConfigError)
+		}),
+	)
+
+	it.effect('encodes non-Latin1 credentials as UTF-8 for basic auth', ({ expect }) =>
+		Effect.gen(function* () {
+			const seen = yield* Queue.unbounded<string | null>()
+			const httpClient = HttpClient.make((request) =>
+				Effect.gen(function* () {
+					const web = yield* HttpClientRequest.toWeb(request).pipe(Effect.orDie)
+					yield* Queue.offer(seen, web.headers.get('authorization'))
+					return HttpClientResponse.fromWeb(request, Response.json({ accountId: '5b10' }))
+				}),
+			)
+			const email = 'bøt@exämple.com'
+			const credential = 'naïve-crédential-✓'
+			const api = yield* JiraApi.pipe(
+				Effect.provide(makeLayer(httpClient, { JIRA_BOT_EMAIL: email, JIRA_API_TOKEN: credential })),
+			)
+			expect(yield* api.myself()).toEqual({ accountId: '5b10' })
+			const authorization = yield* Queue.take(seen)
+			expect(authorization).toBe(`Basic ${Buffer.from(`${email}:${credential}`, 'utf8').toString('base64')}`)
+		}),
+	)
+
+	it.effect('requires an https JIRA_BASE_URL', ({ expect }) =>
+		Effect.gen(function* () {
+			for (const baseUrl of ['http://example.atlassian.net', 'ftp://example.atlassian.net', 'not a url']) {
+				const error = yield* JiraApi.pipe(
+					Effect.provide(makeLayer(okClient, { JIRA_BASE_URL: baseUrl })),
+					Effect.flip,
+				)
+				expect(error).toBeInstanceOf(Config.ConfigError)
+				expect(String(error)).toContain('JIRA_BASE_URL')
+			}
+			const api = yield* JiraApi.pipe(
+				Effect.provide(makeLayer(okClient, { JIRA_BASE_URL: 'https://example.atlassian.net/' })),
+			)
+			expect(yield* api.myself()).toEqual({ accountId: '5b10' })
 		}),
 	)
 })

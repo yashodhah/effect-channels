@@ -59,9 +59,19 @@ const decodeJiraComment = Effect.fn('jira.decode_comment')(function* (admission:
 		Effect.mapError(invalidPayload),
 	)
 	const body = Schema.decodeUnknownOption(JiraCommentBody)(webhook.comment.body)
+	/** Warn, so a payload mismatch is visible in production; log the body format only, never the content. */
+	const annotations = (bodyFormat: 'unrecognized' | 'wiki_markup') => ({
+		eventId: admission.eventId,
+		commentId: webhook.comment.id,
+		bodyFormat,
+	})
 	if (Option.isNone(body)) {
 		yield* Effect.logWarning('Jira comment body is neither ADF nor text; treating it as no mention').pipe(
-			Effect.annotateLogs({ eventId: admission.eventId, commentId: webhook.comment.id }),
+			Effect.annotateLogs(annotations('unrecognized')),
+		)
+	} else if (Predicate.isString(body.value)) {
+		yield* Effect.logWarning('Jira comment body is a string, not ADF; reading it as wiki markup').pipe(
+			Effect.annotateLogs(annotations('wiki_markup')),
 		)
 	}
 	return { admission, webhook, body }

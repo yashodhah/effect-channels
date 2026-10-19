@@ -39,4 +39,19 @@ describe('Jira webhook signature', () => {
 			expect(yield* verify(header('right-key').replace('sha256=', 'sha1='))).toEqual(expected)
 		}),
 	)
+
+	it.effect('accepts a body signed with a key longer than the 64-byte HMAC block', ({ expect }) =>
+		Effect.gen(function* () {
+			const longKey = 'k'.repeat(65) + '-long-test-key'
+			expect(new TextEncoder().encode(longKey).length).toBeGreaterThan(64)
+			yield* verifyJiraWebhookSignature({
+				body,
+				signature: header(longKey),
+				webhookSecret: Redacted.make(longKey),
+			}).pipe(Effect.provide(NodeCrypto.layer))
+			expect(yield* verify(header(longKey), `${longKey}x`)).toEqual(
+				WebhookAuthenticationError.make({ reason: 'invalid_signature' }),
+			)
+		}),
+	)
 })

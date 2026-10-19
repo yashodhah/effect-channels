@@ -78,10 +78,30 @@ describe('Jira comment parsing', () => {
 		)
 	})
 
-	it('tolerates a plain string body as text without mentions', ({ expect }) => {
+	it('tolerates a string body without wiki-markup mentions as text without mentions', ({ expect }) => {
 		expect(commentPlainText('just text')).toBe('just text')
 		expect(mentionedAccountIds('just text')).toEqual([])
 		expect(textAfterMention('just text', botAccountId)).toBeUndefined()
+	})
+
+	it('finds a wiki-markup [~accountid:] mention of the bot in a string body', ({ expect }) => {
+		const body = `[~accountid:${botAccountId}] /research how should we do this?`
+		expect(mentionedAccountIds(body)).toEqual([botAccountId])
+		expect(textAfterMention(body, botAccountId)).toBe('/research how should we do this?')
+		expect(commentPlainText(body)).toBe(`@${botAccountId} /research how should we do this?`)
+	})
+
+	it('uses the first wiki-markup mention of the bot and lists every mentioned account once', ({ expect }) => {
+		const body = `hey [~accountid:${otherAccountId}] and [~accountid:${botAccountId}] /research a [~accountid:${botAccountId}] b`
+		expect(mentionedAccountIds(body)).toEqual([otherAccountId, botAccountId])
+		expect(textAfterMention(body, botAccountId)).toBe(`/research a @${botAccountId} b`)
+	})
+
+	it('does not match a wiki-markup mention of another account in a string body', ({ expect }) => {
+		const body = `[~accountid:${otherAccountId}] /research nope`
+		expect(mentionedAccountIds(body)).toEqual([otherAccountId])
+		expect(textAfterMention(body, botAccountId)).toBeUndefined()
+		expect(commentPlainText(body)).toBe(`@${otherAccountId} /research nope`)
 	})
 
 	it('rejects a body that is neither ADF nor a string', ({ expect }) => {

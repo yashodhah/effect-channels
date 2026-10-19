@@ -19,8 +19,17 @@ export type JiraWebhookProviderOptions = {
 	readonly site: string
 }
 
+/** The largest webhook body the provider reads, 1 MiB; a larger body is answered with 413 by the routes. */
+export const jiraMaxBodyBytes = 1_048_576
+
+/**
+ * The admission's event id is `comment_created:<comment.id>`, taken from the signed body. The
+ * `X-Atlassian-Webhook-Identifier` header is not covered by the signature, so a replayed body with a fresh
+ * header would otherwise be admitted as a new event and start a second run.
+ */
 export const makeJiraWebhookProvider = (options: JiraWebhookProviderOptions): WebhookProvider<Crypto.Crypto> => ({
 	providerName: 'jira',
+	maxBodyBytes: jiraMaxBodyBytes,
 	handle: (input) =>
 		Effect.gen(function* () {
 			const headers = yield* Schema.decodeUnknownEffect(JiraWebhookHeaders)(input.headers).pipe(
@@ -47,7 +56,7 @@ export const makeJiraWebhookProvider = (options: JiraWebhookProviderOptions): We
 					provider: 'jira',
 					installationId: options.site,
 					resourceId: jiraIssueResourceId({ issueId: webhook.issue.id }),
-					eventId: headers['x-atlassian-webhook-identifier'] ?? webhook.comment.id,
+					eventId: `comment_created:${webhook.comment.id}`,
 					payload: webhook,
 				}),
 			})

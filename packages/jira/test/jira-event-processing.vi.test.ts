@@ -9,7 +9,7 @@ import {
 	ProviderEventIgnored,
 	ProviderEventInvalid,
 } from '@humanlayer/channels-delivery'
-import { Effect, Option, Ref, Schema } from 'effect'
+import { Effect, Logger, Option, Ref, Schema } from 'effect'
 import { vi } from 'vite-plus/test'
 
 import { makeTestDeliveryExecution } from '../../delivery/test/delivery-execution'
@@ -114,7 +114,7 @@ describe('Jira event batch processing', () => {
 			const { result, preparations } = yield* process({ onMentioned }, [
 				fixtureAdmission('comment-created-by-bot.json'),
 			])
-			expect(Schema.is(ProviderEventIgnored)(result)).toBe(true)
+			expect(result).toEqual(ProviderEventIgnored.make({ reason: 'no_relevant_event' }))
 			expect(onMentioned).not.toHaveBeenCalled()
 			expect(preparations).toEqual([])
 		}),
@@ -144,6 +144,49 @@ describe('Jira event batch processing', () => {
 			expect(unparseable.result).toEqual(ProviderEventIgnored.make({ reason: 'no_activation_event' }))
 			expect(onMentioned).not.toHaveBeenCalled()
 		}),
+	)
+
+	it.effect('runs onMentioned for a wiki-markup [~accountid:] mention in a string body', ({ expect }) =>
+		Effect.gen(function* () {
+			const onMentioned = vi.fn<Handler>(() => Effect.void)
+			const payload = fixturePayload('comment-created-mention.json')
+			payload.comment.body = `[~accountid:${bot.accountId}] /research from wiki markup`
+			const { result } = yield* process({ onMentioned }, [admission(payload, 'wiki-body')])
+			expect(result).toEqual(ProviderEventHandled.make({}))
+			expect(onMentioned).toHaveBeenCalledOnce()
+			expect(onMentioned.mock.calls[0]?.[0].comment.afterMention).toBe('/research from wiki markup')
+		}),
+	)
+
+	it.effect(
+		'warns with the body format and comment id, never the content, for a string or undecodable body',
+		({ expect }) =>
+			Effect.gen(function* () {
+				const logs: Array<string> = []
+				const logger = Logger.layer([
+					Logger.make((entry) => logs.push(JSON.stringify(Logger.formatStructured.log(entry)))),
+				])
+				const onMentioned = vi.fn<Handler>(() => Effect.void)
+				const payload = fixturePayload('comment-created-plain.json')
+				payload.comment.body = 'private-string-body-sentinel'
+				yield* process({ onMentioned }, [admission(payload, 'string-body')]).pipe(Effect.provide(logger))
+				payload.comment.body = { type: 'doc', content: 'private-undecodable-body-sentinel' }
+				yield* process({ onMentioned }, [admission(payload, 'object-body')]).pipe(Effect.provide(logger))
+
+				expect(logs).toHaveLength(2)
+				const [stringLog, objectLog] = logs.map((line) => JSON.parse(line))
+				expect(stringLog.level).toBe('WARN')
+				expect(stringLog.annotations).toMatchObject({
+					commentId: payload.comment.id,
+					bodyFormat: 'wiki_markup',
+				})
+				expect(objectLog.level).toBe('WARN')
+				expect(objectLog.annotations).toMatchObject({
+					commentId: payload.comment.id,
+					bodyFormat: 'unrecognized',
+				})
+				expect(logs.join('\n')).not.toContain('private-')
+			}),
 	)
 
 	it.effect('ignores a mention when no handler is configured', ({ expect }) =>

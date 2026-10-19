@@ -42,15 +42,27 @@ const statusError = (operation: JiraApiOperation, response: HttpClientResponse.H
 
 const finalError = (operation: JiraApiOperation) => JiraApiError.make({ operation, retryable: false })
 
-/** Reads `JIRA_BASE_URL`, `JIRA_BOT_EMAIL`, and `JIRA_API_TOKEN` (redacted) when the layer is built. */
+/** Base64 of the UTF-8 bytes; `btoa` on the raw string throws on characters outside Latin-1. */
+const utf8Base64 = (value: string) => {
+	let binary = ''
+	for (const byte of new TextEncoder().encode(value)) binary += String.fromCharCode(byte)
+	return btoa(binary)
+}
+
+/** The base URL must be `https:` with a host: every request carries the bot's credentials. */
+const JiraBaseUrl = Schema.String.check(
+	Schema.isPattern(/^https:\/\/[^\s/?#]+/i, { message: 'JIRA_BASE_URL must be an https:// URL' }),
+)
+
+/** Reads `JIRA_BASE_URL` (https only), `JIRA_BOT_EMAIL`, and `JIRA_API_TOKEN` (redacted) when the layer is built. */
 export const JiraApiLive: Layer.Layer<JiraApi, Config.ConfigError, HttpClient.HttpClient> = Layer.effect(
 	JiraApi,
 	Effect.gen(function* () {
-		const baseUrl = (yield* Config.String('JIRA_BASE_URL')).replace(/\/+$/, '')
+		const baseUrl = (yield* Config.schema(JiraBaseUrl, 'JIRA_BASE_URL')).replace(/\/+$/, '')
 		const email = yield* Config.String('JIRA_BOT_EMAIL')
 		const token = yield* Config.Redacted('JIRA_API_TOKEN')
 		const httpClient = yield* HttpClient.HttpClient
-		const authorization = () => `Basic ${btoa(`${email}:${Redacted.value(token)}`)}`
+		const authorization = () => `Basic ${utf8Base64(`${email}:${Redacted.value(token)}`)}`
 
 		/** Send a request and decode a 2xx JSON body; transport failures are retryable, decode failures are not. */
 		const send = <A, I>(

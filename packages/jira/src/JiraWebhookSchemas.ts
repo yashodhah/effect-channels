@@ -2,9 +2,12 @@ import { Schema } from 'effect'
 
 import { JiraAccountId, JiraIssueId } from './JiraIdentity'
 
+/**
+ * Only the signature header is read. `X-Atlassian-Webhook-Identifier` is not covered by the HMAC, so the
+ * event id comes from the signed body instead (see `makeJiraWebhookProvider`).
+ */
 export const JiraWebhookHeaders = Schema.Struct({
 	'x-hub-signature': Schema.NonEmptyString,
-	'x-atlassian-webhook-identifier': Schema.optionalKey(Schema.NonEmptyString),
 })
 
 export const JiraWebhookEnvelope = Schema.Struct({ webhookEvent: Schema.NonEmptyString })
@@ -16,7 +19,7 @@ export const JiraUser = Schema.Struct({
 })
 export type JiraUser = typeof JiraUser.Type
 
-/** `body` is an ADF document in Jira Cloud payloads and a plain string otherwise; callers parse it. */
+/** `body` is an ADF document in Jira Cloud payloads and a wiki-markup string otherwise; callers parse it. */
 export const JiraComment = Schema.Struct({
 	id: Schema.NonEmptyString,
 	author: JiraUser,

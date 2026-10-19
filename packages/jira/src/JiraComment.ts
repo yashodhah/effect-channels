@@ -1,7 +1,8 @@
 /**
- * Reading a Jira comment body: an Atlassian Document Format (ADF) tree in Jira Cloud payloads, or a plain
- * string otherwise. A string body is treated as text with no mentions (see ASSUMPTIONS.md). The webhook
- * schema keeps the body unparsed; decode it with {@link JiraCommentBody} before calling these functions.
+ * Reading a Jira comment body: an Atlassian Document Format (ADF) tree in Jira Cloud payloads, or a
+ * string otherwise. A string body is read as wiki markup, where a mention is written `[~accountid:<id>]`
+ * and renders as `@<id>`; any other text is kept as it is (see ASSUMPTIONS.md). The webhook schema keeps
+ * the body unparsed; decode it with {@link JiraCommentBody} before calling these functions.
  */
 import { Predicate, Schema } from 'effect'
 
@@ -68,14 +69,31 @@ const renderNode = (node: JiraAdfNode, rendering: Rendering, accountId: string |
 	})
 }
 
+/** A wiki-markup user mention, `[~accountid:<id>]`; group 1 is the account id. */
+const wikiMention = /\[~accountid:([^\]\s]+)\]/g
+
+/** Render a wiki-markup string body, replacing each mention token with `@<id>`. */
+const renderWikiMarkup = (body: string, rendering: Rendering, accountId: string | undefined) => {
+	let last = 0
+	for (const match of body.matchAll(wikiMention)) {
+		const id = match[1] ?? ''
+		rendering.text += `${body.slice(last, match.index)}@${id}`
+		if (rendering.mentionOffset === undefined && accountId !== undefined && id === accountId) {
+			rendering.mentionOffset = rendering.text.length
+		}
+		last = match.index + match[0].length
+	}
+	rendering.text += body.slice(last)
+}
+
 const render = (body: JiraCommentBody, accountId?: string): Rendering => {
 	const rendering: Rendering = { text: '', mentionOffset: undefined }
-	if (Predicate.isString(body)) rendering.text = body
+	if (Predicate.isString(body)) renderWikiMarkup(body, rendering, accountId)
 	else renderNode(body, rendering, accountId)
 	return rendering
 }
 
-/** The comment as plain text, with each mention rendered as `@<displayName>`. */
+/** The comment as plain text, with each ADF mention rendered as `@<displayName>` and each wiki-markup one as `@<id>`. */
 export const commentPlainText = (body: JiraCommentBody): string => render(body).text
 
 /** The account ids mentioned anywhere in the body, nested blocks included, in document order without repeats. */
@@ -87,6 +105,12 @@ export const mentionedAccountIds = (body: JiraCommentBody): ReadonlyArray<string
 		node.content?.forEach(walk)
 	}
 	if (!Predicate.isString(body)) walk(body)
+	else {
+		for (const match of body.matchAll(wikiMention)) {
+			const id = match[1]
+			if (id !== undefined && !ids.includes(id)) ids.push(id)
+		}
+	}
 	return ids
 }
 
