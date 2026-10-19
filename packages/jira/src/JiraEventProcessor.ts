@@ -155,7 +155,7 @@ const prepareInvocation = Effect.fn('jira.prepare_delivery')(function* (
 	event: JiraMentioned,
 ) {
 	const destination = yield* Schema.encodeEffect(JiraDeliveryDestinationJson)(
-		JiraDeliveryDestination.cases.JiraIssue.make({ issue: event.issue }),
+		JiraDeliveryDestination.cases.JiraIssue.make({ issue: event.issue, replyTo: event.comment.author }),
 	).pipe(
 		Effect.tapError((error) => Effect.logError('Jira delivery destination could not be encoded', error)),
 		Effect.mapError(() => nonRetryableFailure('delivery_destination_unencodable')),

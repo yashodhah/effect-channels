@@ -17,6 +17,12 @@ export class JiraApiError extends Schema.TaggedError<JiraApiError>()('JiraApiErr
 	),
 }) {}
 
+/** An account a comment mentions. */
+export type JiraMention = {
+	readonly accountId: string
+	readonly displayName: string
+}
+
 export type JiraIssueInfo = {
 	readonly key: string
 	readonly title: string
@@ -24,10 +30,15 @@ export type JiraIssueInfo = {
 }
 
 export type JiraApiOperations = {
-	/** Comment on an issue. Each blank-line-separated block of `markdown` becomes one plain-text paragraph. */
+	/**
+	 * Comment on an issue. Each blank-line-separated block of `markdown` becomes one plain-text paragraph;
+	 * nothing in `markdown` ever becomes a mention. `mention`, when given, starts the first paragraph with an
+	 * ADF mention of that account; it must come from a structural source (a webhook's author), never from text.
+	 */
 	readonly postComment: (input: {
 		readonly issueKey: string
 		readonly markdown: string
+		readonly mention?: JiraMention
 	}) => Effect.Effect<{ readonly commentId: string }, JiraApiError>
 	readonly fetchIssue: (issueKey: string) => Effect.Effect<JiraIssueInfo, JiraApiError>
 	/** The account the credentials belong to. */

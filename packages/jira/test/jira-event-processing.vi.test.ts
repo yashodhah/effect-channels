@@ -89,11 +89,35 @@ describe('Jira event batch processing', () => {
 				PreparedDeliveryInvocation.make({
 					callback: 'onMentioned',
 					presentationVersion: 1,
-					destination: { _tag: 'JiraIssue', issue: { id: '10042', key: 'ABC-7', mailboxKey } },
+					destination: {
+						_tag: 'JiraIssue',
+						issue: { id: '10042', key: 'ABC-7', mailboxKey },
+						replyTo: { accountId: '557058a1b2c3d4e5f6a7b8c9', displayName: 'Alex Example' },
+					},
 					supportedOperations: jiraSupportedOperations,
 					reactionTargets: [],
 				}),
 			])
+		}),
+	)
+
+	it.effect("ignores the bot's own reply that starts with a mention of the requester", ({ expect }) =>
+		Effect.gen(function* () {
+			const payload = fixturePayload('comment-created-by-bot.json')
+			payload.comment.body.content = [
+				{
+					type: 'paragraph',
+					content: [
+						{ type: 'mention', attrs: { id: '557058a1b2c3d4e5f6a7b8c9', text: '@Alex Example' } },
+						{ type: 'text', text: ' Echo: Add rate limiting' },
+					],
+				},
+			]
+			const onMentioned = vi.fn<Handler>(() => Effect.void)
+			const { result, preparations } = yield* process({ onMentioned }, [admission(payload, 'bot-reply')])
+			expect(result).toEqual(ProviderEventIgnored.make({ reason: 'no_relevant_event' }))
+			expect(onMentioned).not.toHaveBeenCalled()
+			expect(preparations).toEqual([])
 		}),
 	)
 

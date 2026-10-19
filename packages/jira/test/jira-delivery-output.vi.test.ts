@@ -82,6 +82,54 @@ describe('Jira delivery output', () => {
 		}),
 	)
 
+	it.effect('PresentOutcome and CreateMessage mention the saved requester', ({ expect }) =>
+		Effect.gen(function* () {
+			const replyTo = { accountId: '557058a1b2c3d4e5f6a7b8c9', displayName: 'Alex Example' }
+			const withReplyTo = PreparedDeliveryInvocation.make({
+				...prepared,
+				destination: yield* Schema.encodeEffect(JiraDeliveryDestinationJson)(
+					JiraDeliveryDestination.cases.JiraIssue.make({ issue: destination.issue, replyTo }),
+				),
+			})
+			const inputs = yield* Ref.make<ReadonlyArray<unknown>>([])
+			const api = Layer.mock(JiraApi, {
+				postComment: (input) =>
+					Ref.update(inputs, (all) => [...all, input]).pipe(Effect.as({ commentId: '901' })),
+			})
+			const processor = yield* makeJiraOutputProcessor({ namespace: 'jira-output-test' }).pipe(
+				Effect.provide(api),
+			)
+			for (const operation of [
+				ProviderPresentOutcome.make({ clearActivity: true, outcome: completed, markdown: 'Done.' }),
+				CreateMessage.make({ messageId: MessageId.make('m'), markdown: 'Hi' }),
+			]) {
+				const result = yield* processor
+					.process(ProviderOutputAttempt.make({ ...attempt(operation), prepared: withReplyTo }))
+					.pipe(Effect.result)
+				expect(Result.isSuccess(result)).toBe(true)
+			}
+			expect(yield* Ref.get(inputs)).toEqual([
+				{ issueKey: 'ABC-7', markdown: 'Done.', mention: replyTo },
+				{ issueKey: 'ABC-7', markdown: 'Hi', mention: replyTo },
+			])
+		}),
+	)
+
+	it.effect('posts without a mention when the saved destination has no requester', ({ expect }) =>
+		Effect.gen(function* () {
+			const inputs = yield* Ref.make<ReadonlyArray<unknown>>([])
+			const api = Layer.mock(JiraApi, {
+				postComment: (input) =>
+					Ref.update(inputs, (all) => [...all, input]).pipe(Effect.as({ commentId: '902' })),
+			})
+			const processor = yield* makeJiraOutputProcessor({ namespace: 'jira-output-test' }).pipe(
+				Effect.provide(api),
+			)
+			yield* processor.process(attempt(CreateMessage.make({ messageId: MessageId.make('m'), markdown: 'Hi' })))
+			expect(yield* Ref.get(inputs)).toEqual([{ issueKey: 'ABC-7', markdown: 'Hi' }])
+		}),
+	)
+
 	it.effect('PresentOutcome without markdown posts nothing', ({ expect }) =>
 		Effect.gen(function* () {
 			const { result, calls } = yield* run(

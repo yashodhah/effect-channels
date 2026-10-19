@@ -2,7 +2,7 @@
 import { Config, Effect, Layer, Predicate, Redacted, Schema } from 'effect'
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from 'effect/http'
 
-import { JiraApi, JiraApiError, type JiraApiOperation } from './JiraApi'
+import { JiraApi, JiraApiError, type JiraApiOperation, type JiraMention } from './JiraApi'
 import { commentPlainText, JiraAdfNode } from './JiraComment'
 
 const CommentCreated = Schema.Struct({ id: Schema.NonEmptyString })
@@ -15,16 +15,34 @@ const IssueResponse = Schema.Struct({
 })
 const MyselfResponse = Schema.Struct({ accountId: Schema.NonEmptyString })
 
-/** One ADF paragraph per blank-line-separated block of text; no markdown is rendered. */
-export const markdownToAdf = (markdown: string) => ({
-	version: 1,
-	type: 'doc',
-	content: markdown
+type AdfInline =
+	| { readonly type: 'text'; readonly text: string }
+	| { readonly type: 'mention'; readonly attrs: { readonly id: string; readonly text: string } }
+type AdfParagraph = { readonly type: 'paragraph'; readonly content: ReadonlyArray<AdfInline> }
+
+/**
+ * One ADF paragraph per blank-line-separated block of text; no markdown is rendered, and the text only
+ * ever becomes `text` nodes (so `[~accountid:...]` or `@name` in it stays text). When `mention` is given,
+ * the first paragraph starts with a mention node, then the first block's text after a single space.
+ */
+export const markdownToAdf = (markdown: string, mention?: JiraMention) => {
+	const blocks = markdown
 		.split(/\n{2,}/)
 		.map((block) => block.trim())
 		.filter((block) => block.length > 0)
-		.map((text) => ({ type: 'paragraph', content: [{ type: 'text', text }] })),
-})
+	const paragraph = (content: ReadonlyArray<AdfInline>): AdfParagraph => ({ type: 'paragraph', content })
+	const text = (value: string): AdfInline => ({ type: 'text', text: value })
+	if (Predicate.isUndefined(mention)) {
+		return { version: 1, type: 'doc', content: blocks.map((block) => paragraph([text(block)])) }
+	}
+	const mentionNode: AdfInline = {
+		type: 'mention',
+		attrs: { id: mention.accountId, text: `@${mention.displayName}` },
+	}
+	const [first, ...rest] = blocks
+	const lead = paragraph(Predicate.isUndefined(first) ? [mentionNode] : [mentionNode, text(` ${first}`)])
+	return { version: 1, type: 'doc', content: [lead, ...rest.map((block) => paragraph([text(block)]))] }
+}
 
 const secondsPattern = /^\d+$/
 const retryAfterMillis = (value: string | undefined) => {
@@ -100,9 +118,9 @@ export const makeJiraApiLive = (
 					)
 
 			return JiraApi.of({
-				postComment: ({ issueKey, markdown }) =>
+				postComment: ({ issueKey, markdown, mention }) =>
 					HttpClientRequest.post(`${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`).pipe(
-						HttpClientRequest.bodyJson({ body: markdownToAdf(markdown) }),
+						HttpClientRequest.bodyJson({ body: markdownToAdf(markdown, mention) }),
 						Effect.mapError(() => finalError('post_comment')),
 						Effect.flatMap((request) => send('post_comment', CommentCreated, request)),
 						Effect.map(({ id }) => ({ commentId: id })),

@@ -4,6 +4,7 @@
  * - `PresentOutcome` comments its Markdown on the issue, with any `awaitingInput` options listed after it.
  *   Without Markdown it makes no comment.
  * - `CreateMessage` comments. Its receipt holds the comment id.
+ * - Both start the comment with a mention of the destination's saved `replyTo` (the requester), when present.
  * - Everything else (`SetActivity`, `SetMessageReaction`, `UpdateMessage`, `DeleteMessage`, `RenderPlan`,
  *   `AddExternalLink`) is not in `jiraSupportedOperations` and fails as final `unsupported_operation`.
  *
@@ -20,7 +21,7 @@ import {
 } from '@humanlayer/channels-delivery'
 import { Array as Arr, Effect, Match, Predicate, Schema } from 'effect'
 
-import { JiraApi } from './JiraApi'
+import { JiraApi, type JiraMention } from './JiraApi'
 import { JiraDeliveryDestinationJson, jiraPresentationVersion } from './JiraDeliveryDestination'
 
 /** What Jira made for an operation: the comment it posted. Saved by the store, read only here. */
@@ -49,13 +50,19 @@ const outcomeMarkdown = (outcome: DeliveryOutcome, markdown: string) =>
 		Match.orElse(() => markdown),
 	)
 
-/** Comment on the issue; the receipt holds the comment id. */
-const postComment = Effect.fn('jira.output.post_comment')(function* (issueKey: string, markdown: string) {
+/** Comment on the issue, mentioning `mention` first when given; the receipt holds the comment id. */
+const postComment = Effect.fn('jira.output.post_comment')(function* (
+	issueKey: string,
+	markdown: string,
+	mention: JiraMention | undefined,
+) {
 	const api = yield* JiraApi
-	const posted = yield* api.postComment({ issueKey, markdown }).pipe(
-		Effect.tapError((error) => Effect.logWarning('Jira output comment failed', error)),
-		Effect.mapError((error) => failed('jira_comment_failed', error.retryable, error.retryAfterMs)),
-	)
+	const posted = yield* api
+		.postComment(Predicate.isUndefined(mention) ? { issueKey, markdown } : { issueKey, markdown, mention })
+		.pipe(
+			Effect.tapError((error) => Effect.logWarning('Jira output comment failed', error)),
+			Effect.mapError((error) => failed('jira_comment_failed', error.retryable, error.retryAfterMs)),
+		)
 	const receipt = yield* Schema.encodeEffect(JiraOutputReceiptJson)(
 		JiraOutputReceipt.make({ comment: { id: posted.commentId } }),
 	).pipe(
@@ -89,15 +96,16 @@ export const makeJiraOutputProcessor = Effect.fn('jira.make_output_processor')(f
 				yield* Effect.logWarning('Jira output retried after an attempt that may have been applied')
 			}
 			const issueKey = destination.issue.key
+			const mention = destination.replyTo
 			yield* Effect.annotateCurrentSpan({ 'jira.issue_key': issueKey })
 
 			return yield* Match.value(attempt.operation).pipe(
 				Match.tag('PresentOutcome', (operation) =>
 					Predicate.isUndefined(operation.markdown)
 						? Effect.succeed(DeliveryOutputApplied.make({}))
-						: postComment(issueKey, outcomeMarkdown(operation.outcome, operation.markdown)),
+						: postComment(issueKey, outcomeMarkdown(operation.outcome, operation.markdown), mention),
 				),
-				Match.tag('CreateMessage', ({ markdown }) => postComment(issueKey, markdown)),
+				Match.tag('CreateMessage', ({ markdown }) => postComment(issueKey, markdown, mention)),
 				Match.orElse(() => Effect.fail(unsupported())),
 			)
 		},

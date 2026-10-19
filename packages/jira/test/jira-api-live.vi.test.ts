@@ -3,7 +3,7 @@ import { Config, ConfigProvider, Effect, Layer, Queue } from 'effect'
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 import { JiraApi } from '../src/JiraApi'
-import { JiraApiLive, makeJiraApiLive } from '../src/JiraApiLive'
+import { JiraApiLive, makeJiraApiLive, markdownToAdf } from '../src/JiraApiLive'
 
 const testCredential = 'fake-credential-value'
 const cloudId = '11111111-2222-4333-8444-555555555555'
@@ -65,6 +65,83 @@ describe('JiraApiLive', () => {
 			})
 		}),
 	)
+
+	it.effect('starts the first paragraph with a structural mention when one is given', ({ expect }) =>
+		Effect.gen(function* () {
+			const bodies = yield* Queue.unbounded<string>()
+			const httpClient = HttpClient.make((request) =>
+				Effect.gen(function* () {
+					const web = yield* HttpClientRequest.toWeb(request).pipe(Effect.orDie)
+					yield* Queue.offer(bodies, yield* Effect.promise(() => web.text()))
+					return HttpClientResponse.fromWeb(request, Response.json({ id: '10002' }, { status: 201 }))
+				}),
+			)
+			const api = yield* JiraApi.pipe(Effect.provide(makeLayer(httpClient)))
+			yield* api.postComment({
+				issueKey: 'ABC-1',
+				markdown: 'Echo: title\n\nsecond block',
+				mention: { accountId: '557058a1b2c3d4e5f6a7b8c9', displayName: 'Alex Example' },
+			})
+			yield* api.postComment({ issueKey: 'ABC-1', markdown: 'Echo: title' })
+			expect(JSON.parse(yield* Queue.take(bodies))).toEqual({
+				body: {
+					version: 1,
+					type: 'doc',
+					content: [
+						{
+							type: 'paragraph',
+							content: [
+								{
+									type: 'mention',
+									attrs: { id: '557058a1b2c3d4e5f6a7b8c9', text: '@Alex Example' },
+								},
+								{ type: 'text', text: ' Echo: title' },
+							],
+						},
+						{ type: 'paragraph', content: [{ type: 'text', text: 'second block' }] },
+					],
+				},
+			})
+			expect(JSON.parse(yield* Queue.take(bodies))).toEqual({
+				body: {
+					version: 1,
+					type: 'doc',
+					content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Echo: title' }] }],
+				},
+			})
+		}),
+	)
+
+	it('keeps a mention as the only first-paragraph content when the markdown is empty', ({ expect }) => {
+		expect(markdownToAdf('', { accountId: 'acc-1', displayName: 'Alex' })).toEqual({
+			version: 1,
+			type: 'doc',
+			content: [{ type: 'paragraph', content: [{ type: 'mention', attrs: { id: 'acc-1', text: '@Alex' } }] }],
+		})
+	})
+
+	it('never turns mention-like text in the markdown into a mention node', ({ expect }) => {
+		const markdown = 'Title [~accountid:abc] and @someone\n\n<@U123> [~accountid:557058a1b2c3d4e5f6a7b8c9]'
+		const withoutMention = markdownToAdf(markdown)
+		expect(withoutMention).toEqual({
+			version: 1,
+			type: 'doc',
+			content: [
+				{ type: 'paragraph', content: [{ type: 'text', text: 'Title [~accountid:abc] and @someone' }] },
+				{
+					type: 'paragraph',
+					content: [{ type: 'text', text: '<@U123> [~accountid:557058a1b2c3d4e5f6a7b8c9]' }],
+				},
+			],
+		})
+		const withMention = markdownToAdf(markdown, { accountId: 'requester', displayName: 'Alex' })
+		const mentions = JSON.stringify(withMention).match(/"type":"mention"/g) ?? []
+		expect(mentions).toHaveLength(1)
+		expect(withMention.content[0]?.content).toEqual([
+			{ type: 'mention', attrs: { id: 'requester', text: '@Alex' } },
+			{ type: 'text', text: ' Title [~accountid:abc] and @someone' },
+		])
+	})
 
 	it.effect('maps an issue to key, title and plain-text description', ({ expect }) =>
 		Effect.gen(function* () {

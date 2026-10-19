@@ -1,6 +1,6 @@
 # Jira
 
-`@humanlayer/channels-jira` turns Jira Cloud `comment_created` webhooks that mention a bot account into durable issue callbacks. It verifies the `X-Hub-Signature` HMAC, stores accepted events in provider-neutral mailboxes keyed by issue, runs `onMentioned` with the text after the mention, and posts replies as issue comments through `JiraApi`.
+`@humanlayer/channels-jira` turns Jira Cloud `comment_created` webhooks that mention a bot account into durable issue callbacks. It verifies the `X-Hub-Signature` HMAC, stores accepted events in provider-neutral mailboxes keyed by issue, runs `onMentioned` with the text after the mention, and posts replies as issue comments through `JiraApi`. A reply starts with an ADF mention of the person whose comment started the delivery (`replyTo` on the saved destination, taken from the signed webhook's comment author; never parsed from text). Jira has no comment reactions or threads, so that mention is how a reply points at its request.
 
 Status: experimental. Only authentication and `GET /myself` through the gateway have been checked against a real site (2026-10-19); the payload, signature and mention formats, and the comment and issue calls, are unverified and listed in [ASSUMPTIONS.md](./ASSUMPTIONS.md).
 

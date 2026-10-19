@@ -7,12 +7,22 @@ import { Schema } from 'effect'
 
 import { JiraIssueRef } from './JiraCallbackEvents'
 
-/** The version of {@link JiraDeliveryDestination}. Bump when it changes shape. */
+/**
+ * The version of {@link JiraDeliveryDestination}. Bump when it changes shape incompatibly. Adding the
+ * optional `replyTo` did not bump it: destinations saved without it still decode.
+ */
 export const jiraPresentationVersion = 1
 
-/** The issue a delivery replies on. */
+/** The person a reply mentions: the author of the comment that started the delivery, from the signed webhook. */
+export const JiraReplyTo = Schema.Struct({ accountId: Schema.String, displayName: Schema.String })
+export type JiraReplyTo = typeof JiraReplyTo.Type
+
+/**
+ * The issue a delivery replies on. `replyTo` is the requester replies start by mentioning; it is optional
+ * so destinations saved before it existed still decode (their replies mention no one).
+ */
 export const JiraDeliveryDestination = Schema.TaggedUnion({
-	JiraIssue: { issue: JiraIssueRef },
+	JiraIssue: { issue: JiraIssueRef, replyTo: Schema.optionalKey(JiraReplyTo) },
 })
 export type JiraDeliveryDestination = typeof JiraDeliveryDestination.Type
 
